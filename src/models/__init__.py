@@ -7,6 +7,6 @@ This package contains model definitions for different phases:
 - Phase III: Optimized models for real-time inference
 """
 
-from .bilstm import BiLSTMModel
+from .bilstm import OptimizedBiLSTMModel
 
-__all__ = ['BiLSTMModel']
+__all__ = ['OptimizedBiLSTMModel']

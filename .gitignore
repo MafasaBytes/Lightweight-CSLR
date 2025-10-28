@@ -24,30 +24,9 @@ MANIFEST
 
 # Virtual Environment
 venv/
-env/
 ENV/
-*.egg-info/
-dist/
-build/
-
-# Data files
-data/raw_data/
-data/processed/
-*.npy
-*.csv
-*.mp4
-*.avi
-
-# Model weights
-*.pt
-*.pth
-*.onnx
-*.pb
-
-# Logs
-*.log
-outputs/
-nul
+env/
+.venv
 
 # IDE
 .vscode/
@@ -55,14 +34,82 @@ nul
 *.swp
 *.swo
 *~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Machine Learning
+*.h5
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.pth
+*.pt
+*.ckpt
+*.pb
+*.onnx
+*.tflite
+
+# Logs
+logs/
+*.log
+runs/
+*.tfevents.*
+lightning_logs/
+
+# Data - Only ignore large data files, keep structure
+data/raw_data/phoenix-2014-multisigner/**/*.mp4
+data/raw_data/phoenix-2014-multisigner/**/*.avi
+data/raw_data/phoenix-2014-signerindependent-SI5/**/*.mp4
+data/raw_data/phoenix-2014-signerindependent-SI5/**/*.avi
+# Keep extracted features but add to gitignore if they get too large
+# data/features/**/*.npz
+
+# Model checkpoints - track small configs but not large weights
+models/**/*.pt
+models/**/*.pth
+models/**/*.ckpt
+!models/**/config*.json
+!models/**/training_results.json
+
+# Results - keep metrics but not large outputs
+results/**/*.png
+results/**/*.jpg
+results/**/*.mp4
+results/**/*.avi
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+.cache/
 
 # OS
-.DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes
 
-# Claude
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+htmlcov/
+.hypothesis/
 .claude/
 
 # Temporary files
 extraction_output.log
 feature-extraction-env.sh
+NUL
+
+# Archive - deprecated code
+archive/
