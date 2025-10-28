@@ -1,0 +1,40 @@
+Loading the LM will be faster if you build a binary file.
+Reading lm\3gram.arpa
+----5---10---15---20---25---30---35---40---45---50---55---60---65---70---75---80---85---90---95--100
+The ARPA file is missing <unk>.  Substituting log10 probability -100.
+****************************************************************************************************
+Using device: cuda
+
+Loading vocabulary from: data/baseline_vocabulary/vocabulary.txt
+Vocabulary size: 1229
+
+Loading model from: models/bilstm_baseline/checkpoint_best.pt
+Model loaded successfully!
+  Parameters: 7,469,005
+
+Loading test dataset...
+Loaded 629 samples from test.corpus.csv
+Dataset size: 629
+
+Initializing beam search decoder...
+  Language model: lm/3gram.arpa
+  Beam size: 10
+  LM weight: 0.5
+  Word score: 0.5
+
+======================================================================
+BEAM SEARCH EVALUATION
+======================================================================
+
+Evaluating test set with beam search...
+Processing test:   0%|          | 0/79 [00:00<?, ?it/s]Processing test:   0%|          | 0/79 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Users\Masia\OneDrive\Desktop\sign-language-recognition\src\baseline\evaluate_beam.py", line 414, in <module>
+    main()
+  File "C:\Users\Masia\OneDrive\Desktop\sign-language-recognition\src\baseline\evaluate_beam.py", line 328, in main
+    beam_wer, beam_predictions, beam_targets = evaluate_with_beam_search(
+  File "C:\Users\Masia\OneDrive\Desktop\sign-language-recognition\src\baseline\evaluate_beam.py", line 115, in evaluate_with_beam_search
+    results = decoder(seq_log_probs.unsqueeze(0))  # Add batch dim
+  File "C:\Users\Masia\OneDrive\Desktop\sign-language-recognition\venv\lib\site-packages\torchaudio\models\decoder\_ctc_decoder.py", line 378, in __call__
+    raise RuntimeError("emissions must be contiguous.")
+RuntimeError: emissions must be contiguous.
