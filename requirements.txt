@@ -1,0 +1,23 @@
+# Phase 1: Core Dependencies for Technical Validation & Baseline
+torch==2.2.0
+torchaudio==2.2.0
+torchvision==0.16.0
+mediapipe==0.10.8
+opencv-python==4.8.1
+numpy==1.24.3
+pandas==2.1.3
+matplotlib==3.8.2
+seaborn==0.13.0
+tqdm==4.66.1
+tensorboard==2.15.1
+scikit-learn==1.3.2
+Pillow==10.1.0
+
+# Beam Search & Language Model
+editdistance==0.6.2  # For WER calculation
+pyyaml==6.0.1  # For config files
+
+# Utility libraries
+psutil==5.9.6  # For memory profiling
+colorama==0.4.6  # Windows terminal color support for tqdm
+GPUtil==1.4.0  # GPU monitoring (optional)
