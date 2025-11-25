@@ -296,7 +296,7 @@ class HierarchicalTeacher(nn.Module):
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         
-        # Import modality fusion from I3D teacher (reuse existing code)
+        # Import modality fusion from I3D teacher 
         from src.models.i3d_teacher import SignLanguageModalityFusion
         
         # Modality fusion (same as I3D teacher)
@@ -396,11 +396,14 @@ class HierarchicalTeacher(nn.Module):
         """
         B, T, _ = features.shape
         
-        # Clean NaN/Inf values (same as I3D teacher)
-        features = torch.nan_to_num(features, nan=0.0, posinf=10.0, neginf=-10.0)
+        # Clean NaN/Inf values 
+        features = torch.nan_to_num(features,
+                                    nan=0.0, posinf=10.0, neginf=-10.0,
+                                    nan_policy='clip', posinf_policy='clip', neginf_policy='clip'
+                                    )
         features = torch.clamp(features, min=-100.0, max=100.0)
         
-        # Extract modality features (same method as I3D teacher)
+        # Extract modality features
         pose, hands, face, temporal = self.extract_features(features)
         
         # Modality fusion

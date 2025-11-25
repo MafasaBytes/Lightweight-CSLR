@@ -131,7 +131,7 @@ def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_
         vocabulary=vocab,
         split='train',
         augment=True,
-        normalize=True,  # Enabled normalization
+        normalize=False,  # Disabled - using per-sample normalization in training loop
         max_seq_length=256   
     )
 
@@ -141,7 +141,7 @@ def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_
         vocabulary=vocab,
         split='dev',
         augment=False,
-        normalize=True,  # Enabled normalization
+        normalize=False,  # Disabled - using per-sample normalization in validation loop
         max_seq_length=256   
     )
 
@@ -151,7 +151,7 @@ def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_
         vocabulary=vocab,
         split='test',
         augment=False,
-        normalize=True,  # Enabled normalization
+        normalize=False,  # Disabled - using per-sample normalization in validation loop
         max_seq_length=256   
     )
 
@@ -254,7 +254,7 @@ def plot_training_curves(
     
     # 4. WER and Loss overview
     ax4 = axes[1, 1]
-    ax4_twin = ax4.twinx()
+    ax4 = ax4.twinx()
 
     ax4.scatter(val_losses, val_wers, alpha=0.6, s=30)
     ax4.set_xlabel('Validation Loss', fontsize=12)
@@ -296,6 +296,8 @@ def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, 
     total_loss = 0
     num_batches = 0
     nan_count = 0
+    all_predictions = []
+    all_targets = []
 
     progress_bar = tqdm(dataloader, desc=f'Epoch {epoch} - Training Teacher')
 
@@ -305,11 +307,24 @@ def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, 
         input_lengths = batch['input_lengths'].to(device)
         target_lengths = batch['target_lengths'].to(device)
 
-        # Diagnostic logging for first batch of first epoch
+        # Diagnostic logging for first batch of first epoch (before normalization)
         if epoch == 1 and batch_idx == 0 and logger:
             logger.info("First batch diagnostics:")
-            logger.info(f"  Raw features: mean={features.mean():.4f}, std={features.std():.4f}")
+            logger.info(f"  Raw features (before norm): mean={features.mean():.4f}, std={features.std():.4f}")
             logger.info(f"  Raw features range: [{features.min():.4f}, {features.max():.4f}]")
+
+        # Per-sample normalization (like overfit test - prevents double normalization)
+        features_mean = features.mean(dim=(1, 2), keepdim=True)
+        features_std = features.std(dim=(1, 2), keepdim=True) + 1e-6
+        features = (features - features_mean) / features_std
+        
+        # Clip extreme values to prevent numerical instability (common in sign language features)
+        features = torch.clamp(features, min=-10.0, max=10.0)
+
+        # Diagnostic logging after normalization
+        if epoch == 1 and batch_idx == 0 and logger:
+            logger.info(f"  After per-sample norm: mean={features.mean():.4f}, std={features.std():.4f}")
+            logger.info(f"  After per-sample norm range: [{features.min():.4f}, {features.max():.4f}]")
 
         # Check for NaN/Inf in input data after normalization
         if torch.isnan(features).any() or torch.isinf(features).any():
@@ -371,8 +386,7 @@ def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, 
             nan_count += 1
             continue
 
-        # Large gradients are OK - gradient clipping handles them
-        # Log very large gradients for monitoring, but don't skip
+        # Large gradients clipping
         if grad_norm > 200.0 and batch_idx % 100 == 0:
             if logger:
                 logger.info(f"Large gradient norm: {grad_norm:.2f} at batch {batch_idx} (normal at start, clipped to 1.0)")
@@ -414,6 +428,14 @@ def validate(model, dataloader, criterion, vocab, device):
         input_lengths = batch['input_lengths'].to(device)
         target_lengths = batch['target_lengths'].to(device)
 
+        # Per-sample normalization (matching training loop)
+        features_mean = features.mean(dim=(1, 2), keepdim=True)
+        features_std = features.std(dim=(1, 2), keepdim=True) + 1e-6
+        features = (features - features_mean) / features_std
+        
+        # Clip extreme values to prevent numerical instability (matching training)
+        features = torch.clamp(features, min=-10.0, max=10.0)
+
         # FP32 forward pass (no autocast, matching overfitting test)
         logits = model(features, input_lengths)  # Model now returns raw logits
         log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
@@ -432,7 +454,9 @@ def validate(model, dataloader, criterion, vocab, device):
         )
 
         for pred in predictions:
-            all_predictions.append(vocab.indices_to_words(pred))
+            # Convert list of word indices to string
+            words = vocab.indices_to_words(pred)
+            all_predictions.append(' '.join(words))
 
         # Convert targets
         labels_cpu = labels.cpu().numpy()
@@ -440,7 +464,8 @@ def validate(model, dataloader, criterion, vocab, device):
         start_idx = 0
         for length in target_lengths_cpu:
             target = labels_cpu[start_idx:start_idx+length]
-            all_targets.append(vocab.indices_to_words(target))
+            words = vocab.indices_to_words(target)
+            all_targets.append(' '.join(words))
             start_idx += length
 
     avg_loss = total_loss / num_batches if num_batches > 0 else 0
@@ -450,7 +475,9 @@ def validate(model, dataloader, criterion, vocab, device):
     return {
         'val_loss': avg_loss,
         'wer': wer,
-        'ser': ser
+        'ser': ser,
+        'predictions': all_predictions[:10],  # Save first 10 for inspection
+        'targets': all_targets[:10]
     }
 
 
@@ -610,6 +637,13 @@ def main(args):
             torch.save(checkpoint, output_dir / 'best_i3d.pth')
             logger.info(f"New best teacher saved with WER: {best_wer:.2f}%")
 
+            # Show sample predictions
+            logger.info("\nSample predictions:")
+            for pred, target in zip(val_metrics['predictions'][:3], 
+                                   val_metrics['targets'][:3]):
+                logger.info(f"  Target: {target}")
+                logger.info(f"  Pred:   {pred}")
+
             # Check if we reached target for teacher
             if best_wer < 30.0:
                 logger.info(f"Teacher target achieved! WER < 30% ({best_wer:.2f}%)")
@@ -706,8 +740,8 @@ def main(args):
 
     writer.close()
 
-
 if __name__ == "__main__":
+    import argparse
     parser = argparse.ArgumentParser(description='Train I3D Teacher Model')
 
     # Data arguments
@@ -723,7 +757,7 @@ if __name__ == "__main__":
                         help='Dropout rate')
 
     # Training arguments
-    parser.add_argument('--batch_size', type=int, default=2,
+    parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size ')
     parser.add_argument('--epochs', type=int, default=1000,
                         help='Number of epochs')
@@ -735,7 +769,7 @@ if __name__ == "__main__":
                         help='Weight decay')
 
     # Other arguments
-    parser.add_argument('--num_workers', type=int, default=2,
+    parser.add_argument('--num_workers', type=int, default=4,
                         help='Data loading workers')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')

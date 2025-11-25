@@ -32,18 +32,18 @@ See [PIPELINE_STRUCTURE.md](PIPELINE_STRUCTURE.md) for detailed organization.
 
 ### Current Status
 
-#### ✅ Completed
+#### Completed
 - MediaPipe feature extraction (6,516 dimensions)
 - Dataset preparation (RWTH-PHOENIX-Weather 2014)
 - Clean pipeline structure
 - Archived old overfitted models
 
-#### 🚧 In Progress
+#### In Progress
 - MobileNetV3 backbone implementation
 - Modality-specific encoders
 - Knowledge distillation framework
 
-#### 📋 TODO
+#### TODO
 - [ ] Complete Phase I baseline (target: 40% WER)
 - [ ] Implement Phase II distillation (target: < 25% WER)
 - [ ] Phase III deployment optimization (> 30 FPS)

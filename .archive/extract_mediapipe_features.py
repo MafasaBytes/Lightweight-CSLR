@@ -16,6 +16,9 @@ import logging
 import sys
 import os
 
+
+
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -185,7 +188,7 @@ def extract_features_from_videos(video_dir, output_dir, annotation_file=None):
         logger.error("No video files found. Please ensure videos are downloaded.")
         logger.info("\nTo download RWTH-PHOENIX-Weather 2014 dataset:")
         logger.info("1. Visit: https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX/")
-        logger.info("2. Download the 'Phoenix2014 Full Frame Videos' (~45GB)")
+        logger.info("2. Download the 'Phoenix2014 Full Frame Videos' (~53GB)")
         logger.info("3. Extract to: data/raw_data/phoenix-2014-signerindependent-SI5/features/fullFrame-210x260px/")
         return
 
