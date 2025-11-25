@@ -16,7 +16,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+
+# TensorBoard import 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    HAS_TENSORBOARD = True
+except (ImportError, AttributeError):
+    HAS_TENSORBOARD = False
+    SummaryWriter = None
+    
 import numpy as np
 from tqdm import tqdm
 import json
@@ -65,7 +73,7 @@ class WarmupCosineScheduler:
 
         # Calculate learning rate based on current epoch
         if epoch <= 0:
-            # Before training starts, use minimum learning rate
+            # Use minimum learning rate
             lr = self.min_lr
         elif epoch < self.warmup_epochs:
             # Warmup phase: linearly increase from min_lr to base_lr
@@ -107,7 +115,6 @@ class WarmupCosineScheduler:
         self.current_epoch = int(d.get('current_epoch', self.current_epoch))
         self._last_lr = float(d.get('_last_lr', self._last_lr))
 
-
 def setup_logging(output_dir: Path):
     """Setup logging configuration."""
     log_file = output_dir / 'teacher_training.log'
@@ -120,7 +127,6 @@ def setup_logging(output_dir: Path):
         ]
     )
     return logging.getLogger(__name__)
-
 
 def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_count() - 1)):
     """Create dataloaders for teacher training (smaller batch size due to model size)."""
@@ -184,7 +190,6 @@ def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_
     )
 
     return train_loader, val_loader, test_loader
-
 
 def plot_training_curves(
     train_losses,
@@ -286,7 +291,6 @@ def plot_training_curves(
     
     return plot_path_png
 
-
 def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, logger=None):
     """
     Train teacher for one epoch with stability improvements.
@@ -333,9 +337,8 @@ def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, 
             nan_count += 1
             continue
 
-        # FP32 forward pass (disabled mixed precision for stability)
-        # Mixed precision was causing numerical instability with teacher model
-        logits = model(features, input_lengths)  # Model now returns raw logits
+        # FP32 forward pass
+        logits = model(features, input_lengths)  # Model returns raw logits
 
         # Check logits for NaN/Inf before loss computation
         if torch.isnan(logits).any() or torch.isinf(logits).any():
@@ -411,7 +414,6 @@ def train_epoch(model, dataloader, criterion, optimizer, scaler, device, epoch, 
         'nan_count': nan_count
     }
 
-
 @torch.no_grad()
 def validate(model, dataloader, criterion, vocab, device):
     """Validate teacher model."""
@@ -479,7 +481,6 @@ def validate(model, dataloader, criterion, vocab, device):
         'predictions': all_predictions[:10],  # Save first 10 for inspection
         'targets': all_targets[:10]
     }
-
 
 def main(args):
     """Main teacher training function."""
@@ -554,7 +555,11 @@ def main(args):
     )
     
     # TensorBoard writer
-    writer = SummaryWriter(output_dir / 'tensorboard')
+    writer = None
+    if HAS_TENSORBOARD:
+        writer = SummaryWriter(output_dir / 'tensorboard')
+    else:
+        logger.warning("TensorBoard not available - skipping tensorboard logging")
 
     # Save configuration
     config = {
@@ -614,12 +619,13 @@ def main(args):
         logger.info(f"WER: {val_metrics['wer']:.2f}%")
         logger.info(f"SER: {val_metrics['ser']:.2f}%")
 
-        # TensorBoard logging
-        writer.add_scalar('Loss/Train', train_metrics['train_loss'], epoch)
-        writer.add_scalar('Loss/Val', val_metrics['val_loss'], epoch)
-        writer.add_scalar('Metrics/WER', val_metrics['wer'], epoch)
-        writer.add_scalar('Metrics/SER', val_metrics['ser'], epoch)
-        writer.add_scalar('LR', optimizer.param_groups[0]['lr'], epoch)
+        # TensorBoard logging (if available)
+        if writer:
+            writer.add_scalar('Loss/Train', train_metrics['train_loss'], epoch)
+            writer.add_scalar('Loss/Val', val_metrics['val_loss'], epoch)
+            writer.add_scalar('Metrics/WER', val_metrics['wer'], epoch)
+            writer.add_scalar('Metrics/SER', val_metrics['ser'], epoch)
+            writer.add_scalar('LR', optimizer.param_groups[0]['lr'], epoch)
 
         # Save best model
         if val_metrics['wer'] < best_wer:
@@ -738,7 +744,8 @@ def main(args):
     shutil.copy(output_dir / 'best_i3d.pth', teacher_checkpoint_dir / 'best_i3d.pth')
     logger.info(f"Best teacher checkpoint copied to {teacher_checkpoint_dir / 'best_i3d.pth'}")
 
-    writer.close()
+    if writer:
+        writer.close()
 
 if __name__ == "__main__":
     import argparse
@@ -773,7 +780,7 @@ if __name__ == "__main__":
                         help='Data loading workers')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
-    parser.add_argument('--early_stopping_patience', type=int, default=100,
+    parser.add_argument('--early_stopping_patience', type=int, default=20,
                         help='Early stopping patience')
 
     args = parser.parse_args()
