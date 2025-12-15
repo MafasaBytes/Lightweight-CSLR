@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
 
 # TensorBoard import 
 try:
@@ -42,78 +43,6 @@ from src.models.pretrained_loader import SignLanguagePretrainedLoader
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-class WarmupCosineScheduler:
-    """Learning rate scheduler with warmup and cosine annealing."""
-
-    def __init__(self, optimizer, warmup_epochs: int, total_epochs: int,
-                 base_lr: float, min_lr: float = 1e-6):
-        self.optimizer = optimizer
-        self.warmup_epochs = int(warmup_epochs)
-        self.total_epochs = int(total_epochs)
-        self.base_lr = float(base_lr)
-        self.min_lr = float(min_lr)
-        self.current_epoch = 0
-        # keep last lr for logging
-        self._last_lr = base_lr
-
-    def step(self, epoch_or_loss):
-        """
-        Accept either an integer epoch (preferred) or a numeric val loss (legacy).
-        If a float is passed that looks like a loss, we increment epoch by 1.
-        """
-        # If a user accidentally passes a loss (float), treat as "advance one epoch"
-        if isinstance(epoch_or_loss, (float,)) and epoch_or_loss >= 0 and epoch_or_loss < 10:
-            # legacy call with val_loss -> increment epoch
-            epoch = self.current_epoch + 1
-        else:
-            epoch = int(epoch_or_loss)
-
-        self.current_epoch = epoch
-
-        # Calculate learning rate based on current epoch
-        if epoch <= 0:
-            # Use minimum learning rate
-            lr = self.min_lr
-        elif epoch < self.warmup_epochs:
-            # Warmup phase: linearly increase from min_lr to base_lr
-            # epoch is 1-indexed, so we use (epoch - 1) for proper warmup
-            warmup_progress = (epoch - 1) / max(1, self.warmup_epochs - 1)
-            warmup_progress = min(max(warmup_progress, 0.0), 1.0)
-            lr = self.min_lr + (self.base_lr - self.min_lr) * warmup_progress
-        else:
-            # Cosine annealing phase: decrease from base_lr to min_lr
-            progress = (epoch - self.warmup_epochs) / max(1, (self.total_epochs - self.warmup_epochs))
-            progress = min(max(progress, 0.0), 1.0)
-            lr = self.min_lr + (self.base_lr - self.min_lr) * 0.5 * (1.0 + np.cos(np.pi * progress))
-
-        # Update learning rate in optimizer
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
-
-        self._last_lr = lr
-        return lr
-
-    def get_last_lr(self):
-        return self._last_lr
-
-    def state_dict(self):
-        return {
-            'warmup_epochs': self.warmup_epochs,
-            'total_epochs': self.total_epochs,
-            'base_lr': self.base_lr,
-            'min_lr': self.min_lr,
-            'current_epoch': self.current_epoch,
-            '_last_lr': self._last_lr
-        }
-
-    def load_state_dict(self, d):
-        self.warmup_epochs = int(d.get('warmup_epochs', self.warmup_epochs))
-        self.total_epochs = int(d.get('total_epochs', self.total_epochs))
-        self.base_lr = float(d.get('base_lr', self.base_lr))
-        self.min_lr = float(d.get('min_lr', self.min_lr))
-        self.current_epoch = int(d.get('current_epoch', self.current_epoch))
-        self._last_lr = float(d.get('_last_lr', self._last_lr))
 
 def setup_logging(output_dir: Path):
     """Setup logging configuration."""
@@ -191,84 +120,47 @@ def create_dataloaders(data_dir, vocab, batch_size=2, num_workers=max(0, os.cpu_
 
     return train_loader, val_loader, test_loader
 
-def plot_training_curves(
-    train_losses,
-    val_losses,
-    val_wers,
-    learning_rates,
-    best_wer,
-    output_dir: Path
-):
-    """Create comprehensive training visualization plots for teacher model."""
+def plot_training_curves(train_losses, val_losses, val_wers, learning_rates, 
+                         best_wer, output_dir):
+    """Plot training curves."""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
     epochs = range(1, len(train_losses) + 1)
     
-    # Set style  plots
-    try:
-        plt.style.use('seaborn-v0_8-paper')
-    except:
-        try:
-            plt.style.use('seaborn-paper')
-        except:
-            sns.set_style("whitegrid")
+    # Loss curves
+    axes[0, 0].plot(epochs, train_losses, label='Train', linewidth=2)
+    axes[0, 0].plot(epochs, val_losses, label='Validation', linewidth=2)
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('CTC Loss')
+    axes[0, 0].set_title('Training and Validation Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
     
-    sns.set_palette("husl")
+    # WER curve
+    axes[0, 1].plot(epochs, val_wers, linewidth=2, color='red')
+    axes[0, 1].axhline(y=best_wer, color='green', linestyle='--', 
+                       label=f'Best: {best_wer:.2f}%')
+    axes[0, 1].axhline(y=25, color='red', linestyle='--', 
+                       label='Target: 25%')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('WER (%)')
+    axes[0, 1].set_title('Validation WER')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
     
-    # Create figure with subplots (2x2 layout)
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('I3D Teacher Model - Training Progress', 
-                 fontsize=16, fontweight='bold')
+    # Learning rate
+    axes[1, 0].plot(epochs, learning_rates, linewidth=2, color='blue')
+    axes[1, 0].set_xlabel('Epoch')
+    axes[1, 0].set_ylabel('Learning Rate')
+    axes[1, 0].set_title('Learning Rate Schedule')
+    axes[1, 0].grid(True, alpha=0.3)
     
-    # 1. Loss curves (train vs validation)
-    ax1 = axes[0, 0]
-    ax1.plot(epochs, train_losses, 'b-', label='Training Loss', linewidth=2, alpha=0.8)
-    ax1.plot(epochs, val_losses, 'r-', label='Validation Loss', linewidth=2, alpha=0.8)
-    ax1.set_xlabel('Epoch', fontsize=12)
-    ax1.set_ylabel('CTC Loss', fontsize=12)
-    ax1.set_title('Training and Validation Loss', fontsize=13, fontweight='bold')
-    ax1.legend(fontsize=11, loc='upper right')
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(left=1)
-    
-    # 2. WER over epochs
-    ax2 = axes[0, 1]
-    ax2.plot(epochs, val_wers, 'g-', linewidth=2.5, marker='o', markersize=5, alpha=0.8)
-    ax2.axhline(y=best_wer, color='r', linestyle='--', 
-               label=f'Best WER: {best_wer:.2f}%', linewidth=2)
-    ax2.set_xlabel('Epoch', fontsize=12)
-    ax2.set_ylabel('Word Error Rate (%)', fontsize=12)
-    ax2.set_title('Validation Word Error Rate', fontsize=13, fontweight='bold')
-    ax2.legend(fontsize=11, loc='upper right')
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(left=1)
-    
-    # 3. Learning rate schedule
-    ax3 = axes[1, 0]
-    if len(learning_rates) > 0:
-        ax3.plot(epochs, learning_rates[:len(epochs)], 'm-', 
-                linewidth=2, marker='s', markersize=4, alpha=0.8)
-        ax3.set_xlabel('Epoch', fontsize=12)
-        ax3.set_ylabel('Learning Rate', fontsize=12)
-        ax3.set_title('Learning Rate Schedule', fontsize=13, fontweight='bold')
-        ax3.set_yscale('log')
-        ax3.grid(True, alpha=0.3, which='both')
-        ax3.set_xlim(left=1)
-    else:
-        ax3.text(0.5, 0.5, 'No LR data available', 
-                ha='center', va='center', transform=ax3.transAxes, fontsize=12)
-        ax3.set_title('Learning Rate Schedule', fontsize=13, fontweight='bold')
-    
-    # 4. WER and Loss overview
-    ax4 = axes[1, 1]
-    ax4 = ax4.twinx()
-
-    ax4.scatter(val_losses, val_wers, alpha=0.6, s=30)
-    ax4.set_xlabel('Validation Loss', fontsize=12)
-    ax4.set_ylabel('WER (%)', fontsize=12)
-    ax4.set_title('Loss vs WER Correlation', fontsize=13, fontweight='bold')
-    ax4.grid(True, alpha=0.3)
-    ax4.set_xlim(left=1)
-    ax4.set_ylim(bottom=0)
-    ax4.set_ylim(top=100)
+    # Loss vs WER
+    axes[1, 1].scatter(val_losses, val_wers, alpha=0.6, s=30)
+    axes[1, 1].set_xlabel('Validation Loss')
+    axes[1, 1].set_ylabel('WER (%)')
+    axes[1, 1].set_title('Loss vs WER Correlation')
+    axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -276,9 +168,6 @@ def plot_training_curves(
     figures_dir = Path('figures/teacher')
     figures_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save high-resolution plots
-    plot_path_pdf = figures_dir / 'training_curves.pdf'
-    plt.savefig(plot_path_pdf, dpi=300, bbox_inches='tight', format='pdf')
     
     plot_path_png = figures_dir / 'training_curves.png'
     plt.savefig(plot_path_png, dpi=300, bbox_inches='tight', format='png')
@@ -535,8 +424,9 @@ def main(args):
 
     # Optimizer - 
     base_lr = args.learning_rate  
+    min_lr = 1e-6
 
-    # AdamW optimizer 
+    # AdamW optimizer - start with base_lr
     optimizer = optim.AdamW(
         model.parameters(),
         lr=base_lr,
@@ -545,13 +435,22 @@ def main(args):
         weight_decay=args.weight_decay
     )
 
-    # Learning rate WarmupCosineScheduler
-    scheduler = WarmupCosineScheduler(
+    # Learning rate scheduler: Warmup + ReduceLROnPlateau
+    # Warmup: linearly increase LR from min_lr to base_lr
+    # LambdaLR multiplies initial LR, so we interpolate from (min_lr/base_lr) to 1.0
+    warmup_scheduler = LambdaLR(
         optimizer,
-        warmup_epochs=args.warmup_epochs,
-        total_epochs=args.epochs,
-        base_lr=base_lr,
-        min_lr=1e-6
+        lr_lambda=lambda epoch: (min_lr / base_lr) + (1.0 - min_lr / base_lr) * min((epoch + 1) / args.warmup_epochs, 1.0)
+    )
+    
+    # Reduces LR when validation loss plateaus
+    plateau_scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='min',           # Reduce when loss stops decreasing
+        factor=0.5,           # Reduce by half when stuck
+        patience=10,         # Wait 10 epochs before reducing
+        min_lr=min_lr,       # Minimum LR floor
+        threshold=0.001,     # Improvement threshold
     )
     
     # TensorBoard writer
@@ -594,8 +493,8 @@ def main(args):
         logger.info(f"Epoch {epoch+1}/{args.epochs}")
         logger.info(f"{'='*50}")
 
-        # Update learning rate scheduler BEFORE training (for current epoch)
-        current_lr = scheduler.step(epoch + 1)
+        # Log current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
         logger.info(f"Learning rate: {current_lr:.2e}")
 
         # Train
@@ -605,6 +504,22 @@ def main(args):
 
         # Validate
         val_metrics = validate(model, val_loader, criterion, vocab, device)
+
+        # Update scheduler AFTER validation
+        old_lr = optimizer.param_groups[0]['lr']
+        
+        # Warmup phase: use warmup scheduler
+        if epoch < args.warmup_epochs:
+            warmup_scheduler.step()
+        else:
+            # Post-warmup: use plateau scheduler
+            plateau_scheduler.step(val_metrics['val_loss'])
+        
+        new_lr = optimizer.param_groups[0]['lr']
+        if new_lr < old_lr:
+            logger.info(f"LR reduced: {old_lr:.2e} -> {new_lr:.2e} (plateau detected)")
+        elif epoch == args.warmup_epochs - 1:
+            logger.info(f"Warmup complete, switching to plateau scheduler at LR: {new_lr:.2e}")
 
         # Track metrics for plotting
         train_losses.append(train_metrics['train_loss'])
@@ -636,7 +551,8 @@ def main(args):
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
+                'warmup_scheduler_state_dict': warmup_scheduler.state_dict() if epoch < args.warmup_epochs else None,
+                'plateau_scheduler_state_dict': plateau_scheduler.state_dict() if epoch >= args.warmup_epochs else None,
                 'best_wer': best_wer,
                 'config': config
             }
@@ -688,7 +604,8 @@ def main(args):
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
+                'warmup_scheduler_state_dict': warmup_scheduler.state_dict() if epoch < args.warmup_epochs else None,
+                'plateau_scheduler_state_dict': plateau_scheduler.state_dict() if epoch >= args.warmup_epochs else None,
                 'wer': val_metrics['wer'],
                 'config': config
             }
@@ -770,7 +687,7 @@ if __name__ == "__main__":
                         help='Number of epochs')
     parser.add_argument('--learning_rate', type=float, default=5e-3,
                         help='Learning rate ')
-    parser.add_argument('--warmup_epochs', type=int, default=30,
+    parser.add_argument('--warmup_epochs', type=int, default=5,
                         help='Number of warmup epochs')
     parser.add_argument('--weight_decay', type=float, default=0.05,
                         help='Weight decay')

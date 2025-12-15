@@ -375,4 +375,4 @@ if __name__ == "__main__":
     )
     print(f"Beam search sequences: {len(beam_predictions)} sequences")
 
-    print("\n✓ BiLSTM-CTC module working correctly!")
+    print("\nBiLSTM-CTC module working correctly!")

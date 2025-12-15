@@ -1,7 +1,0 @@
-{
-  "n_components": 1024,
-  "whiten": true,
-  "input_dim": 6516,
-  "total_variance_explained": 1.0000788934613953,
-  "compression_ratio": 6.36328125
-}
