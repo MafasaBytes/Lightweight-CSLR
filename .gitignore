@@ -24,6 +24,7 @@ MANIFEST
 
 # Virtual Environment
 venv/
+venv-wsl/
 ENV/
 env/
 .venv
@@ -40,7 +41,7 @@ env/
 .ipynb_checkpoints
 *.ipynb_checkpoints/
 
-# Machine Learning
+# Machine Learning - Large model/data files
 *.h5
 *.pkl
 *.pickle
@@ -52,6 +53,10 @@ env/
 *.pb
 *.onnx
 *.tflite
+*.safetensors
+*.bin
+*.tar.gz
+*.zip
 
 # Logs
 logs/
@@ -60,32 +65,35 @@ runs/
 *.tfevents.*
 lightning_logs/
 
-# Data - Only ignore large data files, keep structure
-data/raw_data/phoenix-2014-multisigner/**/*.mp4
-data/raw_data/phoenix-2014-multisigner/**/*.avi
-data/raw_data/phoenix-2014-signerindependent-SI5/**/*.mp4
-data/raw_data/phoenix-2014-signerindependent-SI5/**/*.avi
-data/** */
-<<<<<<< HEAD
-data/features/**/*.npz
-data/
-=======
-# Keep extracted features but add to gitignore if they get too large
-# data/features/**/*.npz
->>>>>>> b674efc90889da5b013e835083ef6c665f57ef6d
+# Data - Ignore all large data files
+data/raw_data/
+data/teacher_features/
+data/teacher_logits/
+data/vit_features/
+data/features*/
+data/**/*.npz
+data/**/*.npy
+data/**/*.mp4
+data/**/*.avi
+data/**/*.tar.gz
+data/**/*.zip
+data/**/*.tar
 
-# Model checkpoints - track small configs but not large weights
-models/**/*.pt
-models/**/*.pth
-models/**/*.ckpt
-!models/**/config*.json
-!models/**/training_results.json
+# Model checkpoints - ignore all large weights
+checkpoints/
+models/
+!checkpoints/vocabulary.json
 
-# Results - keep metrics but not large outputs
-results/**/*.png
-results/**/*.jpg
-results/**/*.mp4
-results/**/*.avi
+# Results - ignore large outputs
+figures/
+notebooks/figures/
+results/
+!figures/KD_Framework_Diagram.png
+
+# External/vendor code (embedded git repos)
+adaptsign_repo/
+external/
+adaptsign_repo/work_dir/
 
 # Temporary files
 *.tmp
@@ -110,29 +118,25 @@ docs/.doctrees/
 .tox/
 htmlcov/
 .hypothesis/
-.claude/
+
+# Git recovery artifacts
+recovered/
+.git/lost-found/
 
 # Temporary files
 extraction_output.log
 feature-extraction-env.sh
 NUL
-
-<<<<<<< HEAD
-# Checkpoints
-checkpoints/
-checkpoints/**/*.pt
-checkpoints/**/*.pth
-checkpoints/**/*.ckpt
-checkpoints/**/*.model
-checkpoints/**/*.model.pt
-checkpoints/**/*.model.pth
-checkpoints/**/*.model.ckpt
-checkpoints/**/*.model.pt
+*.tmp
+*.bak
+*.BAD.py
 
 # Archive - deprecated code
 archive/
 test/
-=======
-# Archive - deprecated code
-archive/
->>>>>>> b674efc90889da5b013e835083ef6c665f57ef6d
+
+# Large misc files
+*.mp4
+*.avi
+*.mov
+*.mkv
