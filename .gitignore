@@ -86,8 +86,6 @@ models/
 !checkpoints/vocabulary.json
 
 # Results - ignore large outputs
-figures/
-notebooks/figures/
 results/
 !figures/KD_Framework_Diagram.png
 
