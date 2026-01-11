@@ -68,22 +68,29 @@ def _make_export_figure(
 
     entropy = np.asarray(out["entropy"])
     top1 = np.asarray(out["top1"])
-    attn = np.asarray(out["attn_avg"])
+    attn_raw = out.get("attn_avg", None)
     segs = list(out.get("segments", []))
     vid = str(out.get("video_id", ""))
     decode_method = str(out.get("decode_method", ""))
     beam_width = out.get("beam_width", None)
 
-    T = int(attn.shape[0])
-    if T > max_side:
-        step = int(np.ceil(T / max_side))
-        attn_view = attn[::step, ::step]
-        segs_view = [(tok, s // step, e // step) for tok, s, e in segs]
-        title = f"Self-attention (avg heads) — overview (downsample x{step})"
+    has_attn = attn_raw is not None
+    if has_attn:
+        attn = np.asarray(attn_raw)
+        T = int(attn.shape[0])
+        if T > max_side:
+            step = int(np.ceil(T / max_side))
+            attn_view = attn[::step, ::step]
+            segs_view = [(tok, s // step, e // step) for tok, s, e in segs]
+            title = f"Self-attention (avg heads) — overview (downsample x{step})"
+        else:
+            attn_view = attn
+            segs_view = segs
+            title = "Self-attention (avg heads) — overview"
     else:
-        attn_view = attn
+        attn_view = None
         segs_view = segs
-        title = "Self-attention (avg heads) — overview"
+        title = "Self-attention (avg heads) — not available for this checkpoint"
 
     # Thesis-ready styling: clean white background + slightly larger typography.
     plt.rcParams.update(
@@ -141,18 +148,34 @@ def _make_export_figure(
     ax_conf.grid(True, alpha=0.25)
     ax_conf.legend(loc="upper right", fontsize=8)
 
-    # (c) Attention heatmap
+    # (c) Attention heatmap (optional)
     ax_attn = fig.add_subplot(gs[1, 1])
-    im = ax_attn.imshow(attn_view, cmap="viridis", aspect="auto")
     ax_attn.set_title(title)
     ax_attn.set_xlabel("key time")
     ax_attn.set_ylabel("query time")
-    if show_segments:
-        for _tok, s, _e in segs_view:
-            if 0 <= int(s) < attn_view.shape[0]:
-                ax_attn.axvline(int(s), color="white", linewidth=0.6, alpha=0.7)
-                ax_attn.axhline(int(s), color="white", linewidth=0.6, alpha=0.7)
-    fig.colorbar(im, ax=ax_attn, fraction=0.046, pad=0.02)
+    if has_attn and attn_view is not None:
+        im = ax_attn.imshow(attn_view, cmap="viridis", aspect="auto")
+        if show_segments:
+            for _tok, s, _e in segs_view:
+                if 0 <= int(s) < attn_view.shape[0]:
+                    ax_attn.axvline(int(s), color="white", linewidth=0.6, alpha=0.7)
+                    ax_attn.axhline(int(s), color="white", linewidth=0.6, alpha=0.7)
+        fig.colorbar(im, ax=ax_attn, fraction=0.046, pad=0.02)
+    else:
+        ax_attn.axis("off")
+        ax_attn.text(
+            0.0,
+            0.95,
+            "Attention was requested, but this model does not expose attention weights.\n\n"
+            "If you need attention plots for this sample, use the precomputed PNGs in:\n"
+            "  figures/attention_kd_best_avg/\n"
+            "  figures/attention_kd_best/\n",
+            va="top",
+            ha="left",
+            fontsize=10.0,
+            family="DejaVu Sans",
+            transform=ax_attn.transAxes,
+        )
 
     # (d) Predicted segments table (dashboard-style)
     if include_segments_table:
@@ -263,8 +286,13 @@ def decode(
     in_lens = batch["input_lengths"].to(device)
 
     with torch.no_grad():
-        # return_attn support for interpretability
-        log_probs, out_lens, attn = model(feats, in_lens, return_attn=True)  # type: ignore[arg-type]
+        # Some checkpoints/models support `return_attn=True` for interpretability, others do not.
+        # We try it first and gracefully fall back.
+        attn = None
+        try:
+            log_probs, out_lens, attn = model(feats, in_lens, return_attn=True)  # type: ignore[arg-type]
+        except TypeError:
+            log_probs, out_lens = model(feats, in_lens)
 
     # Decode
     if decode_method == "beam_search":
@@ -288,9 +316,14 @@ def decode(
     entropy = (-p * lp).sum(dim=-1).numpy()
     top1 = p.max(dim=-1).values.numpy()
 
-    # Attention avg
+    # Attention avg (optional)
     Tprime = int(out_lens[0].item())
-    attn_avg = attn[0, :, :Tprime, :Tprime].mean(dim=0).detach().cpu().numpy()
+    attn_avg = None
+    if attn is not None:
+        try:
+            attn_avg = attn[0, :, :Tprime, :Tprime].mean(dim=0).detach().cpu().numpy()
+        except Exception:
+            attn_avg = None
 
     # Segment markers from greedy argmax (for visualization)
     greedy_ids = log_probs[0, :Tprime].argmax(dim=-1).detach().cpu().tolist()
@@ -319,8 +352,9 @@ def main():
     st.markdown(
         """
         <style>
-          .block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
-          div[data-testid="stSidebar"] { min-width: 320px; }
+          .block-container { padding-top: 3rem; padding-bottom: 1.0rem; }
+          div[data-testid="stSidebar"] { min-width: 300px; }
+          header[data-testid="stHeader"] { background: transparent; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -429,7 +463,28 @@ def main():
             st.line_chart(conf_df, height=260)
 
             st.subheader("Attention (avg over heads)")
-            attn = out["attn_avg"]
+            attn = out.get("attn_avg", None)
+            if attn is None:
+                st.info(
+                    "This checkpoint/model does not expose attention weights via `return_attn=True`.\n\n"
+                    "If you want qualitative attention, load the precomputed attention PNGs in `figures/attention_kd_best_avg/` "
+                    "(or per-head grids in `figures/attention_kd_best/`)."
+                )
+                # Try to show the matching precomputed attention image if present.
+                avg_dir = Path("figures/attention_kd_best_avg")
+                heads_dir = Path("figures/attention_kd_best")
+                vid_q = str(out.get("video_id", "")).lower()
+                candidates = []
+                if avg_dir.exists():
+                    candidates += [p for p in avg_dir.glob("*.png") if vid_q and vid_q in p.name.lower()]
+                if not candidates and heads_dir.exists():
+                    candidates += [p for p in heads_dir.glob("*.png") if vid_q and vid_q in p.name.lower()]
+                if candidates:
+                    st.image(str(candidates[0]), use_container_width=True)
+                    st.caption(f"Loaded precomputed attention: `{candidates[0].as_posix()}`")
+                return
+
+            attn = np.asarray(attn)
             T = int(attn.shape[0])
 
             # Controls: overview downsampling + zoom window

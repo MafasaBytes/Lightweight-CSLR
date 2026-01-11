@@ -2,9 +2,41 @@
 
 import torch
 import torch.nn as nn
-from typing import List, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 import numpy as np
+import os
+from itertools import groupby
 
+_HAS_CTCDECODE = False
+try:
+    import ctcdecode  # type: ignore
+
+    _HAS_CTCDECODE = True
+except Exception:
+    _HAS_CTCDECODE = False
+
+
+def _make_ctcdecode_vocab(num_classes: int) -> list[str]:
+    # Same trick as AdaptSign: map class IDs to a stable unicode range.
+    return [chr(x) for x in range(20000, 20000 + int(num_classes))]
+
+
+_CTCDECODE_DECODERS: dict[tuple[int, int, int, int], "ctcdecode.CTCBeamDecoder"] = {}
+
+
+def _get_ctcdecode_decoder(num_classes: int, beam_width: int, blank_id: int, num_processes: int):
+    key = (int(num_classes), int(beam_width), int(blank_id), int(num_processes))
+    if key in _CTCDECODE_DECODERS:
+        return _CTCDECODE_DECODERS[key]
+    vocab = _make_ctcdecode_vocab(num_classes)
+    dec = ctcdecode.CTCBeamDecoder(
+        vocab,
+        beam_width=int(beam_width),
+        blank_id=int(blank_id),
+        num_processes=int(num_processes),
+    )
+    _CTCDECODE_DECODERS[key] = dec
+    return dec
 
 class CTCLoss(nn.Module):
     """CTC Loss wrapper with blank penalty to prevent blank collapse."""
@@ -200,19 +232,55 @@ def ctc_greedy_decode(log_probs: torch.Tensor, blank_idx: int = 0) -> List[List[
     return decoded_sequences
 
 
-def ctc_beam_search_decode(log_probs: torch.Tensor, blank_idx: int = 0, 
-                          beam_width: int = 10) -> List[List[int]]:
+def ctc_beam_search_decode(
+    log_probs: torch.Tensor,
+    lengths: Optional[torch.Tensor] = None,
+    blank_idx: int = 0,
+    beam_width: int = 10,
+    prefer_ctcdecode: bool = True,
+    num_processes: Optional[int] = None,
+) -> List[List[int]]:
     """
     Beam search CTC decoding with proper prefix beam search algorithm.
     
     Args:
         log_probs: [T, N, C] log probabilities
+        lengths: Optional [N] lengths. Required for ctcdecode backend; if None, uses full T.
         blank_idx: Index of blank token
         beam_width: Beam width for search
+        prefer_ctcdecode: If True and ctcdecode is available, use it for speed.
+        num_processes: ctcdecode worker processes (defaults to min(4, cpu_count)).
     
     Returns:
         List of decoded sequences
     """
+    # Fast path: use ctcdecode if available (much faster than Python prefix beam).
+    if prefer_ctcdecode and _HAS_CTCDECODE:
+        if log_probs.dim() != 3:
+            raise ValueError(f"Expected 3D tensor, got {log_probs.dim()}D")
+        T, N, C = log_probs.shape
+        if lengths is None:
+            lengths = torch.full((N,), T, dtype=torch.long, device=log_probs.device)
+        lengths = lengths.to(torch.long).clamp(min=1, max=T)
+
+        # ctcdecode expects probs (B,T,C) on CPU.
+        probs_btc = log_probs.permute(1, 0, 2).softmax(dim=-1).cpu()
+        lens_cpu = lengths.cpu()
+
+        if num_processes is None:
+            num_processes = max(1, min(4, (os.cpu_count() or 1)))
+        dec = _get_ctcdecode_decoder(num_classes=C, beam_width=beam_width, blank_id=blank_idx, num_processes=num_processes)
+        beam_result, _beam_scores, _timesteps, out_seq_len = dec.decode(probs_btc, lens_cpu)
+
+        decoded_sequences: List[List[int]] = []
+        for b in range(N):
+            seq = beam_result[b][0][: out_seq_len[b][0]].tolist()
+            # Collapse repeats and remove blank (mirror AdaptSign).
+            seq = [x for x, _ in groupby(seq)]
+            seq = [x for x in seq if x != blank_idx]
+            decoded_sequences.append(seq)
+        return decoded_sequences
+
     # Handle both [T, N, C] and [N, T, C] formats
     if log_probs.dim() != 3:
         raise ValueError(f"Expected 3D tensor, got {log_probs.dim()}D")
@@ -301,6 +369,114 @@ def ctc_beam_search_decode(log_probs: torch.Tensor, blank_idx: int = 0,
     return decoded_sequences
 
 
+def ctc_beam_search_lm_decode(
+    log_probs: torch.Tensor,
+    lengths: Optional[torch.Tensor] = None,
+    blank_idx: int = 0,
+    beam_width: int = 10,
+    lm = None,
+    lm_weight: float = 0.3,
+    idx2word: Optional[Dict[int, str]] = None,
+) -> List[List[int]]:
+    """
+    Beam search CTC decoding with Language Model shallow fusion.
+    
+    Score = log_ctc + lm_weight * log_lm
+    
+    Args:
+        log_probs: [T, N, C] log probabilities from CTC model
+        blank_idx: Index of blank token
+        beam_width: Beam width for search
+        lm: Language model (must have log_prob(word, context) method)
+        lm_weight: Weight for LM score (0 = no LM, 1 = equal weight)
+        idx2word: Mapping from token index to word string (required if lm is provided)
+    
+    Returns:
+        List of decoded sequences (token indices)
+    """
+    if log_probs.dim() != 3:
+        raise ValueError(f"Expected 3D tensor, got {log_probs.dim()}D")
+
+    T, N, C = log_probs.shape
+    if lengths is None:
+        lengths = torch.full((N,), T, dtype=torch.long, device=log_probs.device)
+    lengths = lengths.to(torch.long).clamp(min=1, max=T)
+
+    # Fast path: use ctcdecode to generate beams, then re-rank with LM.
+    # This is a practical shallow-fusion approximation (re-ranking top beams).
+    if _HAS_CTCDECODE and lm is not None and idx2word is not None:
+        probs_btc = log_probs.permute(1, 0, 2).softmax(dim=-1).cpu()
+        lens_cpu = lengths.cpu()
+        dec = _get_ctcdecode_decoder(num_classes=C, beam_width=beam_width, blank_id=blank_idx, num_processes=max(1, min(4, (os.cpu_count() or 1))))
+        beam_result, beam_scores, _timesteps, out_seq_len = dec.decode(probs_btc, lens_cpu)
+
+        decoded_sequences: List[List[int]] = []
+        for b in range(N):
+            best_seq: List[int] = []
+            best_score = -1e30
+            for k in range(min(beam_width, beam_result.shape[1])):
+                raw = beam_result[b][k][: out_seq_len[b][k]].tolist()
+                raw = [x for x, _ in groupby(raw)]
+                raw = [x for x in raw if x != blank_idx]
+                # CTC score: ctcdecode returns negative log-likelihood; higher is better => negate.
+                ctc_log = -float(beam_scores[b][k].item())
+                # LM score over token strings
+                words = [idx2word.get(int(t), "<unk>") for t in raw]
+                lm_log = float(lm.score_sequence(words)) if hasattr(lm, "score_sequence") else 0.0
+                score = ctc_log + float(lm_weight) * lm_log
+                if score > best_score:
+                    best_score = score
+                    best_seq = raw
+            decoded_sequences.append(best_seq)
+        return decoded_sequences
+
+    # Fallback: very slow pure-Python prefix beam with LM fusion (kept for completeness).
+    # Note: With vocab ~1296, this is not recommended.
+    device = log_probs.device
+    decoded_sequences = []
+    for n in range(N):
+        prefixes = {tuple(): (blank_idx, 0.0, 0.0, 0.0)}
+        for t in range(int(lengths[n].item())):
+            log_prob_dist = log_probs[t, n, :].cpu()
+            new_prefixes = {}
+            for prefix_seq, (last_token, ctc_log_prob, lm_log_prob, _combined) in prefixes.items():
+                blank_ctc = ctc_log_prob + log_prob_dist[blank_idx].item()
+                combined_blank = blank_ctc + lm_weight * lm_log_prob
+                if prefix_seq not in new_prefixes or combined_blank > new_prefixes[prefix_seq][3]:
+                    new_prefixes[prefix_seq] = (last_token, blank_ctc, lm_log_prob, combined_blank)
+                for token_idx in range(C):
+                    if token_idx == blank_idx:
+                        continue
+                    token_ctc = ctc_log_prob + log_prob_dist[token_idx].item()
+                    if token_idx == last_token:
+                        combined = token_ctc + lm_weight * lm_log_prob
+                        if prefix_seq not in new_prefixes or combined > new_prefixes[prefix_seq][3]:
+                            new_prefixes[prefix_seq] = (token_idx, token_ctc, lm_log_prob, combined)
+                    else:
+                        new_seq = prefix_seq + (token_idx,)
+                        new_lm_log_prob = lm_log_prob
+                        if lm is not None and idx2word is not None:
+                            word = idx2word.get(token_idx, "<unk>")
+                            context_words = tuple(
+                                idx2word.get(idx, "<unk>") for idx in prefix_seq[-(lm.n - 1):]
+                            ) if prefix_seq else ()
+                            new_lm_log_prob = lm_log_prob + lm.log_prob(word, context_words)
+                        combined = token_ctc + lm_weight * new_lm_log_prob
+                        if new_seq not in new_prefixes or combined > new_prefixes[new_seq][3]:
+                            new_prefixes[new_seq] = (token_idx, token_ctc, new_lm_log_prob, combined)
+            sorted_prefixes = sorted(new_prefixes.items(), key=lambda x: x[1][3], reverse=True)
+            prefixes = {
+                seq: (last, ctc, lm_score, combined)
+                for seq, (last, ctc, lm_score, combined) in sorted_prefixes[:beam_width]
+            }
+        if prefixes:
+            best_prefix = max(prefixes.items(), key=lambda x: x[1][3])
+            decoded_sequences.append(list(best_prefix[0]))
+        else:
+            decoded_sequences.append([])
+    return decoded_sequences
+
+
 def prepare_ctc_targets(targets: List[List[int]], device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Prepare targets for CTC loss.
@@ -319,4 +495,75 @@ def prepare_ctc_targets(targets: List[List[int]], device: torch.device) -> Tuple
     targets_tensor = torch.tensor(targets_flat, dtype=torch.long, device=device)
     
     return targets_tensor, target_lengths
+
+
+def split_concatenated_targets(targets: torch.Tensor, target_lengths: torch.Tensor) -> List[List[int]]:
+    """
+    Split concatenated CTC targets back into per-sample sequences.
+
+    Args:
+        targets: (sum_L,) concatenated targets
+        target_lengths: (B,) lengths per sample
+    """
+    seqs: List[List[int]] = []
+    offset = 0
+    for L in target_lengths.tolist():
+        L = int(L)
+        seqs.append(targets[offset : offset + L].tolist())
+        offset += L
+    return seqs
+
+
+def ids_to_string(
+    ids: Iterable[int],
+    idx2word: Dict[int, str],
+    skip_tokens: Optional[Set[str]] = None,
+) -> str:
+    """
+    Convert token IDs to a space-separated string.
+
+    Args:
+        ids: token id sequence
+        idx2word: mapping int -> token string
+        skip_tokens: token strings to skip (defaults to common blank/pad tokens)
+    """
+    if skip_tokens is None:
+        skip_tokens = {"<blank>", "<pad>", "<BLANK>", "<PAD>"}
+    words: List[str] = []
+    for t in ids:
+        w = idx2word.get(int(t), "")
+        if not w or w in skip_tokens:
+            continue
+        words.append(w)
+    return " ".join(words)
+
+
+def ctc_greedy_decode_with_lengths(
+    pred_ids: torch.Tensor,
+    lengths: torch.Tensor,
+    blank_idx: int = 0,
+) -> List[List[int]]:
+    """
+    Greedy CTC decode from argmax IDs, honoring per-sample valid lengths.
+
+    Args:
+        pred_ids: (B, T) argmax token IDs
+        lengths: (B,) valid lengths for each sequence
+        blank_idx: blank token ID
+    """
+    if pred_ids.dim() != 2:
+        raise ValueError(f"Expected pred_ids to be (B,T), got {tuple(pred_ids.shape)}")
+    B, T = pred_ids.shape
+    decoded: List[List[int]] = []
+    for b in range(B):
+        L = int(min(int(lengths[b].item()), T))
+        seq = pred_ids[b, :L].tolist()
+        out: List[int] = []
+        prev = blank_idx
+        for tok in seq:
+            if tok != blank_idx and tok != prev:
+                out.append(tok)
+            prev = tok
+        decoded.append(out)
+    return decoded
 

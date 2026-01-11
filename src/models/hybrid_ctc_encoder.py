@@ -5,7 +5,7 @@ Keeps the existing fusion + BiLSTM encoder design, removes the autoregressive de
 and adds temporal downsampling + CTC projection head.
 """
 
-from typing import Tuple
+from typing import Tuple, Optional
 
 import torch
 import torch.nn as nn
@@ -123,14 +123,21 @@ class BiLSTMEncoder(nn.Module):
         self.layer_norm = nn.LayerNorm(hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor, lengths: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        lengths: torch.Tensor,
+        return_attn: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor] | Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (B, T, input_dim)
             lengths: (B,)
+            return_attn: if True, also return per-head self-attention weights (B, H, T, T)
         Returns:
             outputs: (B, T, hidden_dim)
             mask: (B, T) boolean mask (True = valid timestep)
+            attn (optional): (B, H, T, T) attention weights
         """
         B, T, _ = x.shape
 
@@ -151,11 +158,41 @@ class BiLSTMEncoder(nn.Module):
 
         # Self-attention with residual
         key_padding_mask = ~mask
-        attn_out, _ = self.self_attn(
-            lstm_out, lstm_out, lstm_out, key_padding_mask=key_padding_mask
-        )
+        attn_weights: Optional[torch.Tensor] = None
+        if return_attn:
+            # Prefer per-head weights (B,H,T,T) when supported by the installed torch version.
+            try:
+                attn_out, attn_weights = self.self_attn(
+                    lstm_out,
+                    lstm_out,
+                    lstm_out,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=True,
+                    average_attn_weights=False,
+                )
+            except TypeError:
+                # Older torch: no average_attn_weights kwarg. Falls back to averaged weights (B,T,T).
+                attn_out, attn_weights = self.self_attn(
+                    lstm_out,
+                    lstm_out,
+                    lstm_out,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=True,
+                )
+                if attn_weights is not None and attn_weights.dim() == 3:
+                    attn_weights = attn_weights.unsqueeze(1)  # (B,1,T,T)
+        else:
+            attn_out, _ = self.self_attn(
+                lstm_out,
+                lstm_out,
+                lstm_out,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+            )
         output = self.layer_norm(lstm_out + self.dropout(attn_out))  # (B, T, hidden_dim)
 
+        if return_attn and attn_weights is not None:
+            return output, mask, attn_weights
         return output, mask
 
 
