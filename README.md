@@ -139,7 +139,7 @@ python scripts/phase3_benchmark.py \
 # Requires WSL or Linux
 streamlit run apps/edu_dashboard.py
 ```
-#### CSLR: Educational Dashboard - Pred vs Hyp (WER and Acc) + Confidence Metrics
+#### CSLR: Educational Dashboard - Model Artifacts + Pred vs Hyp (WER and Acc) + Confidence Metrics
  <img width="1918" height="869" alt="image" src="https://github.com/user-attachments/assets/f71189dd-5d45-4735-8474-0695b964805c" />
  
 #### CSLR: Educational Dashboard - Attention Visualization
