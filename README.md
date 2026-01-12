@@ -242,6 +242,13 @@ If you use this code, please cite:
   booktitle={LREC},
   year={2014}
 }
+
+@inproceedings{hu2023continuous,
+  title={Continuous Sign Language Recognition with Correlation Network},
+  author={Hu, Lianyu and Gao, Liqing and Liu, Zekang and Feng, Wei},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  year={2023},
+}
 ```
 
 ## License
