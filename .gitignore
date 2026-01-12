@@ -91,7 +91,6 @@ results/
 
 # External/vendor code (embedded git repos)
 adaptsign_repo/
-external/
 adaptsign_repo/work_dir/
 
 # Temporary files
