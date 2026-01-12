@@ -139,7 +139,9 @@ python scripts/phase3_benchmark.py \
 # Requires WSL or Linux
 streamlit run apps/edu_dashboard.py
 ```
-
+#### Sample Dashboard
+ <img width="1907" height="869" alt="image" src="https://github.com/user-attachments/assets/b3a0cba5-30d5-40f6-915d-99c38817bb17" />
+ 
 ### Streaming Demo
 
 ```bash
@@ -149,8 +151,6 @@ python scripts/phase3_streaming_demo.py \
     --window_size 64 \
     --stride 16
 ```
-<img width="1907" height="869" alt="image" src="https://github.com/user-attachments/assets/b3a0cba5-30d5-40f6-915d-99c38817bb17" />
-
 
 ## Project Structure
 
