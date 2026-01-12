@@ -24,8 +24,8 @@ The pipeline uses learned visual features from the **AdaptSign** teacher model:
 - Input: Pre-extracted AdaptSign teacher features (1024-dim per frame)
 - Temporal subsampling: 2x Conv1d (stride=2) for 4x downsampling
 - Encoder: 3-layer BiLSTM (512 hidden) + 8-head self-attention
-- Output: CTC log-probabilities over vocabulary (~1200 glosses)
-- Parameters: ~8M (deployable weights ~16MB fp16)
+- Output: CTC log-probabilities over vocabulary (1296 glosses)
+- Parameters: 8.3M (deployable weights 31.6MB fp32)
 
 ### Performance
 
