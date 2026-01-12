@@ -17,7 +17,7 @@ The pipeline uses learned visual features from the **AdaptSign** teacher model:
 
 ```
 [AdaptSign Teacher Features] → Temporal Subsampling → BiLSTM + MHSA → CTC Head → Beam Search Decoder
-        (1024-dim)                 (Conv1d x2)          (3 layers)      (Linear)     (+ optional LM)
+        (512-dim)                 (Conv1d x2)          (3 layers)      (Linear)     (+ optional LM)
 ```
 
 **Student Model: FeatureBiLSTMCTC**
@@ -31,7 +31,7 @@ The pipeline uses learned visual features from the **AdaptSign** teacher model:
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Dev WER | 27.29% | Beam search (width=10) |
+| Dev WER | 27.29% | Beam search (n=10) |
 | Inference | 25+ FPS | Feature frames on GPU |
 | RTF | 0.008 | Real-time factor @ 25fps video |
 | Model Size | ~31.6 MB | fp32 weights |
