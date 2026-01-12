@@ -141,6 +141,7 @@ streamlit run apps/edu_dashboard.py
 ```
 #### CSLR: Educational Dashboard - Pred vs Hyp (WER and Acc) + Confidence Metrics
  <img width="1918" height="869" alt="image" src="https://github.com/user-attachments/assets/f71189dd-5d45-4735-8474-0695b964805c" />
+ 
 #### CSLR: Educational Dashboard - Attention Visualization
 <img width="1919" height="872" alt="image" src="https://github.com/user-attachments/assets/893c9f85-5784-4522-bfeb-63c8288b7384" />
 
