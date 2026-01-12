@@ -139,9 +139,9 @@ python scripts/phase3_benchmark.py \
 # Requires WSL or Linux
 streamlit run apps/edu_dashboard.py
 ```
-#### Sample Dashboard
- <img width="1907" height="869" alt="image" src="https://github.com/user-attachments/assets/b3a0cba5-30d5-40f6-915d-99c38817bb17" />
- 
+#### CSLR: Educational Dashboard
+ <img width="1918" height="869" alt="image" src="https://github.com/user-attachments/assets/f71189dd-5d45-4735-8474-0695b964805c" />
+
 ### Streaming Demo
 
 ```bash
