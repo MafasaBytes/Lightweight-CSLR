@@ -168,7 +168,7 @@ sign-language-recognition/
 │   │   └── evaluate_student.py   # Comprehensive evaluation script
 │   ├── lm/
 │   │   ├── ngram_lm.py           # N-gram language model
-│   │   └── neural_lm_fusion.py   # Neural LM fusion (experimental)
+│   │   └── neural_lm_fusion.py   # Neural LM fusion
 │   ├── models/
 │   │   ├── baseline_ctc_bilstm.py    # FeatureBiLSTMCTC student model
 │   │   ├── hybrid_ctc_encoder.py     # BiLSTMEncoder + MHSA
@@ -181,7 +181,7 @@ sign-language-recognition/
 │   │   ├── train_distillation.py # Knowledge distillation
 │   │   └── train_visual_baseline_ctc.py  # Baseline training
 │   └── utils/
-│       ├── ctc.py                # CTC decoding (greedy, beam search)
+│       ├── ctc.py                # CTC decoding (greedy | beam search)
 │       ├── metrics.py            # WER computation
 │       └── augmentation.py       # SpecAugment, feature augmentation
 ├── checkpoints/                  # Model checkpoints
